@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8">
+<title>Super Mario estilo + PokeAPI + globo terráqueo</title>
+<style>
+html,body{margin:0;height:100%;background:#000;overflow:hidden}
+body{display:flex;align-items:center;justify-content:center}
+#w{position:relative;width:min(100vw,200vh);aspect-ratio:2/1}
+canvas{display:block;width:100%;height:100%}
+#fx{position:absolute;left:0;top:0}
+#c{position:relative}
+</style></head><body>
+<div id="w"><canvas id="fx" width="800" height="400"></canvas><canvas id="c" width="800" height="400"></canvas></div>
+<script>
+const c=document.getElementById('c'),x=c.getContext('2d'),info={};
+const fc=document.getElementById('fx'),f=fc.getContext('2d');
+const W=800,H=400,R=Math.random,PI=Math.PI;
+/* ================= ANIMACIÓN: GLOBO TERRÁQUEO INTERACTIVO (opción 11) ================= */
+const M={x:400,y:200,d:0,c:[]};
+function mp(e){const b=c.getBoundingClientRect();M.x=(e.clientX-b.left)*W/b.width;M.y=(e.clientY-b.top)*H/b.height;}
+c.onmousemove=mp;c.onmousedown=e=>{mp(e);M.d=1;M.c.push([M.x,M.y]);};onmouseup=()=>M.d=0;
+const bg=col=>{f.globalCompositeOperation='source-over';f.globalAlpha=1;f.fillStyle=col;f.fillRect(0,0,W,H);};
+const A=[
+// 11 globo
+()=>{let rot=0;return t=>{bg('#02040f');rot+=M.d?(M.x-W/2)*.0003:.01;const r0=150,cx=W/2,cy=H/2,tl=.4;
+const gr=f.createRadialGradient(cx,cy,r0*.6,cx,cy,r0*1.25);gr.addColorStop(0,'#0a2a6a');gr.addColorStop(1,'rgba(0,0,0,0)');
+f.fillStyle=gr;f.beginPath();f.arc(cx,cy,r0*1.25,0,7);f.fill();
+for(let la=-80;la<=80;la+=8)for(let lo=0;lo<360;lo+=8){const a=lo*PI/180+rot,b=la*PI/180;
+const X=Math.cos(b)*Math.sin(a),Y=Math.sin(b),Z=Math.cos(b)*Math.cos(a);
+const Y2=Y*Math.cos(tl)-Z*Math.sin(tl),Z2=Y*Math.sin(tl)+Z*Math.cos(tl);if(Z2<0)continue;
+const land=Math.sin(lo*.07)*Math.cos(la*.09)+Math.sin(la*.2+lo*.03)>.4;
+f.fillStyle=land?'#3fbf5f':'#2a6fdb';f.fillRect(cx+X*r0-2,cy-Y2*r0-2,4,4);}}}
+];
+/* ================= JUEGO ESTILO SUPER MARIO ================= */
+let cam=0,score=0,coins=0,lives=3,time=400,fr=0,state='load',jh=0,flagY=0,pool=[],caught=[],enemies=[];
+const TS=32,OY=16,COLS=160,ROWS=12,LEN=COLS*TS,FX=148*TS;
+let cur=A[0](),K=0;
+const grid=Array.from({length:ROWS},()=>new Array(COLS).fill(0));
+const gaps=[[69,70],[86,88],[121,122]];
+for(let i=0;i<COLS;i++){if(gaps.some(([a,b])=>i>=a&&i<=b))continue;grid[10][i]=1;grid[11][i]=1;}
+[[16,7],[21,7],[23,7],[22,3],[78,7],[94,3],[106,7],[109,7],[112,7],[109,3]].forEach(([a,b])=>grid[b][a]=3);
+[[20,7],[22,7],[24,7],[77,7],[79,7],[80,3],[81,3],[82,3],[91,3],[92,3],[93,3],[100,7],[101,7],[118,7],[119,7],[120,7]].forEach(([a,b])=>grid[b][a]=2);
+[[28,2],[38,3],[46,4],[57,4]].forEach(([a,h])=>{for(let i=0;i<h;i++){grid[9-i][a]=5;grid[9-i][a+1]=5;}});
+for(let i=0;i<8;i++)for(let j=0;j<=i;j++)grid[9-j][130+i]=6;
+grid[9][148]=6;
+const tile=(c,r)=>c<0?1:(c>=COLS||r<0||r>=ROWS)?0:grid[r][c];
+const solid=(c,r)=>tile(c,r)>0;
+const cl=(v,a,b)=>Math.max(a,Math.min(b,v));
+const hit=(a,b)=>a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;
+let AC;function beep(fq,d=.1,ty='square'){try{AC=AC||new AudioContext();const o=AC.createOscillator(),v=AC.createGain();o.type=ty;o.frequency.value=fq;v.gain.value=.05;o.connect(v);v.connect(AC.destination);o.start();o.stop(AC.currentTime+d);}catch(e){}}
+const P={x:80,y:200,w:24,h:30,vx:0,vy:0,on:0,f:1,dead:0};
+const bumps=[],pops=[];
+async function poke(){const id=1+Math.floor(R()*151);
+try{const r=await fetch('https://pokeapi.co/api/v2/pokemon/'+id),d=await r.json(),im=new Image();im.src=d.sprites.front_default;return{name:d.name,img:im};}
+catch(e){return{name:'pokemon#'+id,img:null};}}
+function spawn(){enemies=[22,40,51,53,80,97,99,114,116,126].map((c0,i)=>({x:c0*TS,y:300,w:30,h:30,vx:0,vy:0,dir:-1,alive:1,sq:0,act:0,img:pool[i%pool.length].img}));}
+function reset(){P.x=80;P.y=200;P.vx=P.vy=0;P.dead=0;cam=0;time=400;spawn();}
+function die(){if(P.dead)return;P.dead=1;P.vy=-10;beep(150,.5,'sawtooth');}
+function mvx(e){e.x+=e.vx;const r0=Math.floor((e.y-OY)/TS),r1=Math.floor((e.y+e.h-1-OY)/TS),cc=Math.floor((e.vx>0?e.x+e.w-1:e.x)/TS);
+for(let rw=r0;rw<=r1;rw++)if(solid(cc,rw)){e.x=e.vx>0?cc*TS-e.w:(cc+1)*TS;e.vx=0;e.wall=1;break;}}
+function mvy(e,isP){e.y+=e.vy;e.on=0;const c0=Math.floor(e.x/TS),c1=Math.floor((e.x+e.w-1)/TS),dn=e.vy>0,rw=Math.floor(((dn?e.y+e.h:e.y)-OY)/TS);
+for(let cc=c0;cc<=c1;cc++)if(solid(cc,rw)){if(dn){e.y=rw*TS+OY-e.h;e.on=1;}else{e.y=(rw+1)*TS+OY;if(isP){let bc=Math.floor((e.x+e.w/2)/TS);if(!solid(bc,rw))bc=cc;bump(bc,rw);}}e.vy=0;break;}}
+function bump(c0,r0){const t=grid[r0][c0];bumps.push({c:c0,r:r0,t:0});
+if(t==3){grid[r0][c0]=4;coins++;score+=200;beep(988,.08);beep(1318,.2);const d=pool[caught.length%pool.length];caught.push(d.name);
+pops.push({x:c0*TS-4,y:r0*TS+OY-40,t:0,img:d.img});info.textContent='Pokémon capturados: '+caught.join(', ');}else beep(200,.05);}
+function update(){
+fr++;if(state=='load')return;
+if(state=='lose'||state=='win'){if(keys.Enter)location.reload();return;}
+for(let i=bumps.length-1;i>=0;i--){if(++bumps[i].t>8)bumps.splice(i,1);}
+for(let i=pops.length-1;i>=0;i--){pops[i].y-=1.2;if(++pops[i].t>45)pops.splice(i,1);}
+if(P.dead){P.vy+=.5;P.y+=P.vy;if(P.y>H+300){lives--;if(lives<=0)state='lose';else reset();}return;}
+if(state=='flag'){P.x=FX+14-P.w;P.y+=3;flagY=Math.min(flagY+3,9*TS+OY-26);if(P.y+P.h>=10*TS+OY){P.y=10*TS+OY-P.h;state='walk';P.x=FX+20;P.f=1;}return;}
+if(state=='walk'){P.vx=2.5;P.vy+=.6;P.wall=0;mvx(P);mvy(P,0);cam=cl(P.x-320,cam,LEN-W);if(P.x>154*TS){state='win';score+=time*50;time=0;}return;}
+if(fr%24==0&&--time<=0)die();
+const L=keys.ArrowLeft||keys.KeyA,Rt=keys.ArrowRight||keys.KeyD,run=keys.ShiftLeft||keys.ShiftRight||keys.KeyX,J=keys.Space||keys.ArrowUp||keys.KeyW;
+const mx=run?5.5:3.6;
+if(L){P.vx-=.3;P.f=-1;}else if(Rt){P.vx+=.3;P.f=1;}else P.vx*=.86;
+P.vx=cl(P.vx,-mx,mx);if(Math.abs(P.vx)<.05)P.vx=0;
+if(J&&P.on&&!jh){P.vy=-10.8-Math.abs(P.vx)*.3;beep(520,.12);}jh=J;
+P.vy=Math.min(P.vy+((P.vy<0&&J)?.32:.6),12);
+mvx(P);P.x=cl(P.x,cam,LEN-P.w);mvy(P,1);
+if(P.y>H+60)die();
+cam=cl(P.x-320,cam,LEN-W);
+if(P.x+P.w>FX+14){state='flag';flagY=3*TS+OY;score+=Math.max(100,Math.round((10*TS+OY-P.y)/TS)*400);beep(880,.4);return;}
+for(const e of enemies){if(!e.alive){if(e.sq>0)e.sq--;continue;}
+if(!e.act){if(e.x<cam+W+60)e.act=1;else continue;}
+e.vx=e.dir*.8;e.vy=Math.min(e.vy+.6,12);e.wall=0;mvx(e);if(e.wall)e.dir*=-1;mvy(e,0);if(e.y>H+100){e.alive=0;continue;}
+if(hit(P,e)){if(P.vy>0&&P.y+P.h-e.y<22){e.alive=0;e.sq=25;P.vy=-7.5;score+=100;beep(300,.08);boom(e.x+15-cam,e.y+15,30,50);}else die();}}}
+function drawTile(t,X,Y,c0,r0){
+const o=(a,b,w,h,col)=>{x.fillStyle=col;x.fillRect(X+a,Y+b,w,h);};
+if(t==1){o(0,0,TS,TS,'#c84c0c');o(0,0,TS,2,'#fcb090');o(TS-2,0,2,TS,'#000');o(0,TS-2,TS,2,'#000');o(2,14,TS-4,2,'#8a2a00');}
+else if(t==2){o(0,0,TS,TS,'#c84c0c');o(0,10,TS,2,'#000');o(0,21,TS,2,'#000');o(0,TS-2,TS,2,'#000');o(TS-2,0,2,TS,'#000');o(15,0,2,10,'#000');o(7,12,2,9,'#000');o(23,12,2,9,'#000');o(15,23,2,7,'#000');}
+else if(t==3){o(0,0,TS,TS,'#f8b800');o(0,0,TS,2,'#fff2a0');o(0,TS-2,TS,2,'#a05000');o(TS-2,0,2,TS,'#a05000');
+x.fillStyle=(fr>>4)&1?'#a05000':'#fff';x.font='bold 22px monospace';x.textAlign='center';x.fillText('?',X+16,Y+24);}
+else if(t==4){o(0,0,TS,TS,'#8a5a2a');o(2,2,TS-4,TS-4,'#a06a3a');}
+else if(t==5){const Lf=tile(c0-1,r0)!=5,top=tile(c0,r0-1)!=5,s=top?4:0;o(0,0,TS,TS,'#00a800');
+if(Lf){o(0,0,2,TS,'#000');o(6,s,5,TS-s,'#80f080');}else{o(TS-2,0,2,TS,'#000');o(TS-10,s,4,TS-s,'#005800');}if(top)o(0,0,TS,3,'#000');}
+else{o(0,0,TS,TS,'#d0803a');o(0,0,TS,2,'#fcc890');o(TS-2,0,2,TS,'#000');o(0,TS-2,TS,2,'#000');}}
+function drawP(){x.save();x.translate(P.x+12,P.y);x.scale(P.f,1);x.translate(-12,0);
+const o=(a,b,w,h,col)=>{x.fillStyle=col;x.fillRect(a,b,w,h);};
+o(2,0,20,8,'#e52521');o(10,6,14,4,'#e52521');o(4,8,18,8,'#f5c9a0');o(16,10,3,3,'#111');o(2,16,20,6,'#e52521');o(4,18,16,8,'#0a4cc8');
+const w=(fr>>3)&1,mv=Math.abs(P.vx)>.5;
+if(!P.on){o(0,26,10,4,'#6b3a10');o(14,24,10,6,'#6b3a10');}else if(mv&&w){o(2,26,9,4,'#6b3a10');o(13,26,9,4,'#6b3a10');}else{o(0,26,9,4,'#6b3a10');o(15,26,9,4,'#6b3a10');}
+x.restore();}
+function draw(){
+x.clearRect(0,0,W,H);x.textAlign='center';
+if(state=='load'){x.fillStyle='#fff';x.font='bold 24px monospace';x.fillText('Cargando Pokémon...',W/2,H/2);return;}
+x.save();x.translate(-Math.floor(cam),0);
+const c0=Math.floor(cam/TS);
+for(let r0=0;r0<ROWS;r0++)for(let cc=c0;cc<=c0+26&&cc<COLS;cc++){const t=grid[r0][cc];if(!t)continue;
+const b=bumps.find(q=>q.c==cc&&q.r==r0);drawTile(t,cc*TS,r0*TS+OY-(b?Math.sin(b.t/8*PI)*8:0),cc,r0);}
+// castillo
+const cx0=152*TS,cy0=7*TS+OY;x.fillStyle='#c84c0c';x.fillRect(cx0,cy0,5*TS,3*TS);x.fillRect(cx0,cy0-24,5*TS,24);
+x.fillStyle='#5c94fc';for(let i=0;i<5;i++)x.fillRect(cx0+i*TS+8,cy0-24,16,12);x.fillStyle='#000';x.fillRect(cx0+2*TS,cy0+TS,TS,2*TS);x.fillRect(cx0+10,cy0+14,12,16);x.fillRect(cx0+4*TS+10,cy0+14,12,16);
+// bandera
+x.fillStyle='#fff';x.fillRect(FX+14,2*TS+OY,4,8*TS);x.fillStyle='#0a0';x.beginPath();x.arc(FX+16,2*TS+OY-4,6,0,7);x.fill();
+x.fillStyle='#0c0';const fy=state=='play'||state=='load'?3*TS+OY:flagY;x.beginPath();x.moveTo(FX+14,fy);x.lineTo(FX-18,fy+13);x.lineTo(FX+14,fy+26);x.fill();
+// enemigos Pokémon
+for(const e of enemies){if(!e.alive&&e.sq<=0)continue;const ok=e.img&&e.img.complete&&e.img.naturalWidth;
+if(e.alive||e.sq>0){if(!e.alive){x.save();x.translate(0,e.y+e.h);x.scale(1,.25);x.translate(0,-(e.y+e.h));}
+ok?x.drawImage(e.img,e.x+e.w/2-28,e.y+e.h-52,56,56):(x.fillStyle='#8b4513',x.fillRect(e.x,e.y,e.w,e.h));
+if(!e.alive)x.restore();}}
+drawP();
+for(const p of pops){x.globalAlpha=1-p.t/50;if(p.img&&p.img.complete&&p.img.naturalWidth)x.drawImage(p.img,p.x,p.y,72,72);
+x.fillStyle='#fff';x.font='bold 14px monospace';x.fillText('+200',p.x+36,p.y);}x.globalAlpha=1;
+x.restore();drawParts();
+x.font='bold 15px monospace';x.textAlign='left';
+const hd=[['JUGADOR',String(score).padStart(6,'0'),30],['MONEDAS','x'+String(coins).padStart(2,'0')+'  vidas '+lives,230],['MUNDO','1-1',470],['TIEMPO',String(Math.max(0,time)),640]];
+for(const[a,b,px]of hd){x.lineWidth=3;x.strokeStyle='#000';x.strokeText(a,px,20);x.strokeText(b,px,38);x.fillStyle='#fff';x.fillText(a,px,20);x.fillText(b,px,38);}
+if(state=='lose'||state=='win'){x.fillStyle='rgba(0,0,0,.7)';x.fillRect(0,0,W,H);x.fillStyle='#fff';x.textAlign='center';x.font='bold 38px monospace';
+x.fillText(state=='win'?'¡NIVEL COMPLETADO!':'GAME OVER',W/2,185);x.font='18px monospace';x.fillText('Puntos: '+score+' — Enter para reiniciar',W/2,225);
+if(state=='win'&&R()<.15)boom(R()*W,R()*300,50);}}
+const keys={};
+onkeydown=e=>{keys[e.code]=1;if(['Space','ArrowUp','ArrowDown'].includes(e.code))e.preventDefault();};onkeyup=e=>keys[e.code]=0;
+const parts=[];
+function boom(px,py,n=40,hue=R()*360){for(let i=0;i<n;i++){const a=R()*6.283,s=1+R()*6;parts.push({x:px,y:py,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:1,h:hue+R()*40,r:2+R()*4});}}
+function drawParts(){for(let i=parts.length-1;i>=0;i--){const p=parts[i];p.x+=p.vx;p.y+=p.vy;p.vy+=.12;p.life-=.02;
+if(p.life<=0){parts.splice(i,1);continue;}x.globalAlpha=p.life;x.fillStyle=`hsl(${p.h},100%,60%)`;x.beginPath();x.arc(p.x,p.y,p.r*p.life,0,7);x.fill();}x.globalAlpha=1;}
+function loop(){if(K!=15)M.c.length=0;cur(performance.now()/1000);update();draw();requestAnimationFrame(loop);}
+(async()=>{pool=await Promise.all(Array.from({length:12},poke));spawn();state='play';info.textContent='¡Golpea los bloques ? para capturar Pokémon, salta sobre los enemigos y llega a la bandera!';})();
+loop();
+</script></body></html>
